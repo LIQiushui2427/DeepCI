@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from torch import optim
-from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard.writer import SummaryWriter
 from .oadam import OAdam
 from .rbflayer import RBF
 
@@ -77,7 +77,7 @@ class _BaseADeepCI:
         self.optimizerD = OAdam(add_weight_decay(self.learner, learner_l2),
                                 lr=learner_lr, betas=(beta1, .01))
         self.optimizerG = OAdam(add_weight_decay(
-            self.adversary, adversary_l2, skip_list=self.skip_list), lr=adversary_lr, betas=(beta1, .01))
+            self.adversary, adversary_l2, skip_list=[]), lr=adversary_lr, betas=(beta1, .01))
 
         if logger is not None:
             self.writer = SummaryWriter()
