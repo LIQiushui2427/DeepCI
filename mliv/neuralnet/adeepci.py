@@ -201,8 +201,8 @@ class _BaseSupLossADeepCI(_BaseADeepCI):
                 
             print('Epoch {}, d_loss: {:.6f}, g_loss: {:.6f} '.format(epoch, all_D_loss/len(self.train_dl), all_G_loss/len(self.train_dl)))
             
-            torch.save(self.learner, os.path.join(
-                self.model_dir, "epoch{}".format(epoch)))
+            # torch.save(self.learner, os.path.join(
+            #     self.model_dir, "epoch{}".format(epoch)))
 
             if logger is not None:
                 logger(self.learner, self.adversary, epoch, self.writer)
