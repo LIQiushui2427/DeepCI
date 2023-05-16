@@ -12,19 +12,13 @@ from torch.utils.tensorboard.writer import SummaryWriter
 from .oadam import OAdam
 from torch.optim import Adam, SGD, AdamW, RMSprop
 from .rbflayer import RBF
-from torch.amp import autocast_mode
+
 # TODO. This epsilon is used only because pytorch 1.5 has an instability in torch.cdist
 # when the input distance is close to zero, due to instability of the square root in
 # automatic differentiation. Should be removed once pytorch fixes the instability.
 # It can be set to 0 if using pytorch 1.4.0
 EPSILON = 1e-2
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-def to_img(x):
-    out = 0.5 * (x + 1)  # 将x的范围由(-1,1)伸缩到(0,1)
-    out = out.view(-1, 1, 28, 28)
-    return out
 
 def add_weight_decay(net, l2_value, skip_list=()):
     decay, no_decay = [], []
@@ -37,8 +31,7 @@ def add_weight_decay(net, l2_value, skip_list=()):
             decay.append(param)
     return [{'params': no_decay, 'weight_decay': 0.}, {'params': decay, 'weight_decay': l2_value}]
 
-def criterion(y, y_hat):
-    return nn.BCELoss()(y_hat.squeeze(1), y)
+
 def _kernel(x, y, basis_func, sigma):
     return basis_func(torch.cdist(x, y + EPSILON) * torch.abs(sigma))
 
@@ -46,10 +39,10 @@ def _kernel(x, y, basis_func, sigma):
 class _BaseADeepCI:
 
     def _pretrain(self, X_1_a_j, X_2_a_j, X_1_a_k, X_2_a_k, 
-                  X_1_b_j, X_2_b_j, X_1_b_k, X_2_b_k, Z, X_2_a_j_t,X_2_a_k_t,X_2_b_j_t,X_2_b_k_t,
+                  X_1_b_j, X_2_b_j, X_1_b_k, X_2_b_k, Z,
                   learner_l2, adversary_l2, adversary_norm_reg,
                   learner_lr, adversary_lr, n_epochs, bs, train_learner_every, train_adversary_every,
-                  warm_start, logger, model_dir, device = device, verbose = False, add_sample_inds=False):
+                  warm_start, logger, model_dir, device, verbose, add_sample_inds=False):
         """ Prepares the variables required to begin training.
         """
         self.verbose = verbose
@@ -67,7 +60,7 @@ class _BaseADeepCI:
                   X_1_b_j, X_2_b_j, X_1_b_k, X_2_b_k, Z, sample_inds)
         else:
             self.train_ds = TensorDataset(X_1_a_j, X_2_a_j, X_1_a_k, X_2_a_k, 
-                  X_1_b_j, X_2_b_j, X_1_b_k, X_2_b_k, Z, X_2_a_j_t,X_2_a_k_t,X_2_b_j_t,X_2_b_k_t)
+                  X_1_b_j, X_2_b_j, X_1_b_k, X_2_b_k, Z)
             
         self.train_dl = DataLoader(self.train_ds, batch_size=bs, shuffle=True)
 
@@ -81,8 +74,8 @@ class _BaseADeepCI:
                 m.reset_parameters() if hasattr(m, 'reset_parameters') else None))
 
         beta1 = 0.
-        self.optimizerD = SGD(add_weight_decay(self.learner, learner_l2),
-                                lr=learner_lr, momentum=0.9)
+        self.optimizerD = Adam(add_weight_decay(self.learner, learner_l2),
+                                lr=learner_lr, betas=(beta1, .01))
         self.optimizerG = Adam(add_weight_decay(
                                 self.adversary, adversary_l2, skip_list=[]), lr=adversary_lr, betas=(beta1, .01))
 
@@ -122,9 +115,9 @@ class _BaseADeepCI:
 class _BaseSupLossADeepCI(_BaseADeepCI):
 
     def fit(self, X_1_a_j, X_2_a_j, X_1_a_k, X_2_a_k,
-                  X_1_b_j, X_2_b_j, X_1_b_k, X_2_b_k, Z, X_2_a_j_t,X_2_a_k_t,X_2_b_j_t,X_2_b_k_t,
-                learner_l2=2e-5, adversary_l2=2e-5, adversary_norm_reg=1e-3,
-                learner_lr=0.00002, adversary_lr=0.00002, n_epochs=100, bs=100, train_learner_every=1, train_adversary_every=2, ols_weight=0.1, warm_start=False, logger=None, model_dir='.', device = device, verbose=False):
+                  X_1_b_j, X_2_b_j, X_1_b_k, X_2_b_k, Z,
+            learner_l2=2e-5, adversary_l2=2e-5, adversary_norm_reg=1e-3,
+            learner_lr=0.00002, adversary_lr=0.00002, n_epochs=100, bs=100, train_learner_every=1, train_adversary_every=2, ols_weight=0.1, warm_start=False, logger=None, model_dir='.', device = 0, verbose=False):
         """
         Parameters
         ----------
@@ -147,122 +140,69 @@ class _BaseSupLossADeepCI(_BaseADeepCI):
         device : which device to use for training, either 0 or 'cpu'
         """
 
-        X_1_a_j, X_2_a_j, X_1_a_k, X_2_a_k, X_1_b_j, X_2_b_j, X_1_b_k, X_2_b_k, Z = self._pretrain(X_1_a_j, X_2_a_j, X_1_a_k, X_2_a_k, X_1_b_j, X_2_b_j, X_1_b_k, X_2_b_k, Z, X_2_a_j_t,X_2_a_k_t,X_2_b_j_t,X_2_b_k_t, learner_l2, adversary_l2, adversary_norm_reg,learner_lr, adversary_lr, n_epochs, bs, train_learner_every, train_adversary_every,warm_start, logger, model_dir, device, verbose)
+        X_1_a_j, X_2_a_j, X_1_a_k, X_2_a_k, X_1_b_j, X_2_b_j, X_1_b_k, X_2_b_k, Z = self._pretrain(X_1_a_j, X_2_a_j, X_1_a_k, X_2_a_k, X_1_b_j, X_2_b_j, X_1_b_k, X_2_b_k, Z, learner_l2, adversary_l2, adversary_norm_reg,learner_lr, adversary_lr, n_epochs, bs, train_learner_every, train_adversary_every,warm_start, logger, model_dir, device, verbose)
 
         print("BaseSupLossADeepCI: Training learner and adversary")
-
         for epoch in range(n_epochs):
-            self.learner.train()
-            self.adversary.train()
             all_D_loss = 0
             all_G_loss = 0
             # if self.verbose > 0:
                 # print("Epoch #", epoch, sep="")
 
             for it, (x_1_a_j_batch, x_2_a_j_batch, x_1_a_k_batch, x_2_a_k_batch, 
-                        x_1_b_j_batch, x_2_b_j_batch, x_1_b_k_batch, x_2_b_k_batch, z_batch,X_2_a_j_t,X_2_a_k_t,X_2_b_j_t,X_2_b_k_t) in enumerate(self.train_dl):
+                  x_1_b_j_batch, x_2_b_j_batch, x_1_b_k_batch, x_2_b_k_batch, z_batch) in enumerate(self.train_dl):
 
-                x_1_a_j_batch, x_2_a_j_batch, x_1_a_k_batch, x_2_a_k_batch, x_1_b_j_batch, x_2_b_j_batch, x_1_b_k_batch, x_2_b_k_batch, z_batch = \
-                    map(lambda x: x.to(device), (x_1_a_j_batch, x_2_a_j_batch, x_1_a_k_batch, x_2_a_k_batch, x_1_b_j_batch, x_2_b_j_batch, x_1_b_k_batch, x_2_b_k_batch, z_batch))
-                X_2_a_j_t,X_2_a_k_t,X_2_b_j_t,X_2_b_k_t = map(lambda x: x.to(device), (X_2_a_j_t,X_2_a_k_t,X_2_b_j_t,X_2_b_k_t))
-                # shape of x_1_a_j_batch torch.Size([200]) # 0-1
-                # shape of x_2_a_j_batch torch.Size([200, 28, 28])
-                # shape of z_batch torch.Size([200]), range is [0,1]
+                x_1_a_j_batch, x_2_a_j_batch, x_1_a_k_batch, x_2_a_k_batch, x_1_b_j_batch, x_2_b_j_batch, x_1_b_k_batch, x_2_b_k_batch, z_batch = map(lambda x: x.to(device), (x_1_a_j_batch, x_2_a_j_batch, x_1_a_k_batch, x_2_a_k_batch, x_1_b_j_batch, x_2_b_j_batch, x_1_b_k_batch, x_2_b_k_batch, z_batch))
+                
+                pred_a_j = self.learner(x_2_a_j_batch).unsqueeze(1)
+                pred_a_k = self.learner(x_2_a_k_batch).unsqueeze(1)
+                pred_b_j = self.learner(x_2_b_j_batch).unsqueeze(1)
+                pred_b_k = self.learner(x_2_b_k_batch).unsqueeze(1)
+                test = self.adversary(z_batch)**2# Noise
+                
+                m = (x_1_a_j_batch - x_1_a_k_batch + \
+                        x_1_b_k_batch - x_1_b_j_batch + \
+                            pred_a_j - pred_a_k + \
+                            pred_b_k - pred_b_j)
+                
+                #if (it % train_learner_every == 0):
+                
+                # print(x_2_a_j_batch.shape)
+                print("test", torch.log(test))
+                # print("ineq", x_1_a_j_batch - x_1_a_k_batch + pred_b_k - pred_b_j)
+                
+                D_loss = torch.mean(torch.maximum(torch.tensor(0),-1*(m))) + ols_weight * torch.mean((x_1_a_j_batch - x_1_a_k_batch + pred_b_k - pred_b_j)**2) + torch.mean(test)**2
+                
+                self.optimizerD.zero_grad()
+                D_loss.backward()
+                self.optimizerD.step()
 
-                # Shape of X_2_a_j_t : 200, 1
+                # if (it % train_adversary_every == 0):
+                pred_a_j = self.learner(x_2_a_j_batch)
+                pred_a_k = self.learner(x_2_a_k_batch)
+                pred_b_j = self.learner(x_2_b_j_batch)
+                pred_b_k = self.learner(x_2_b_k_batch).unsqueeze(1)
+                test = self.adversary(z_batch)**2# Noise
                 
-                num_imgs = x_1_a_j_batch.shape[0] # bs
+                m = (x_1_a_j_batch - x_1_a_k_batch + \
+                        x_1_b_k_batch - x_1_b_j_batch + \
+                            pred_a_j - pred_a_k + \
+                            pred_b_k - pred_b_j)
                 
-                print("shape of x_2_a_j_batch", x_2_a_j_batch.shape)# shape of x_2_a_j_batch torch.Size([bs, 784]
-                # Train Discriminator
+                G_loss = torch.mean(torch.maximum(torch.tensor(0),-1*(m))) + torch.mean(test)**2
                 
-                # flatten the images  
-                x_2_a_j_batch = torch.flatten(x_2_a_j_batch, start_dim=1)
-                x_2_a_k_batch = torch.flatten(x_2_a_k_batch, start_dim=1)
-                x_2_b_j_batch = torch.flatten(x_2_b_j_batch, start_dim=1)
-                x_2_b_k_batch = torch.flatten(x_2_b_k_batch, start_dim=1)
-                if (it % train_learner_every == 0):
-                    
-                    pred_a_j = self.learner(x_2_a_j_batch)
-                    pred_a_k = self.learner(x_2_a_k_batch) # function h should output 0-9
-                    pred_b_j = self.learner(x_2_b_j_batch)
-                    pred_b_k = self.learner(x_2_b_k_batch)
-                    print('shape(pred_a_j)', pred_a_j.shape)
-                    
-                    # pred_a_j = torch.argmax(pred_a_j, dim=1)
-                    # pred_a_k = torch.argmax(pred_a_k, dim=1)
-                    # pred_b_j = torch.argmax(pred_b_j, dim=1)
-                    # pred_b_k = torch.argmax(pred_b_k, dim=1)
-                    print('shape(pred_a_j)', pred_a_j.shape)
-                    
-                    # d_loss = criterion(pred_a_k.to(dtype = torch.float32), X_2_a_k_t.to(dtype = torch.float32))
-                    d_loss = criterion(torch.argmax(pred_a_k, dim=1).to(dtype = torch.float32), X_2_a_k_t.to(dtype = torch.float32))
-                    
-                    z = torch.rand((num_imgs, 784), device=device)
-                    print('shape(z)', z.shape)
-                    noise_img = self.adversary(z)
-                    print('shape(noise_img)', noise_img.shape)
-                    print('Noise_img is on device:', noise_img.device)
-                    noise_img.to(dtype = torch.float32)
-                    
-                    # print('shape(fake_img)', fake_img.shape)
-    
-                    fake_output = self.learner(noise_img)
-                    
-                    print('shape of x_1_a_j_batch', x_1_a_j_batch.shape)
-                    print('shape of pred_a_j', pred_a_j.shape)
-                    m = (x_1_a_j_batch - x_1_a_k_batch + \
-                            x_1_b_k_batch - x_1_b_j_batch + \
-                                pred_a_j - pred_a_k + \
-                                pred_b_k - pred_b_j)
-                    
-                    D_loss = d_loss
-                    
-                    self.optimizerD.zero_grad()
-                    D_loss.backward(retain_graph=True)
-                    self.optimizerD.step()
-                    all_D_loss += D_loss.item()
-
-                if (it % train_adversary_every == 0):
-                # Train Generator
-                    self.learner.eval()
-                    
-                    pred_a_j = self.learner(x_2_a_j_batch)
-                    pred_a_k = self.learner(x_2_a_k_batch)
-                    pred_b_j = self.learner(x_2_b_j_batch)
-                    pred_b_k = self.learner(x_2_b_k_batch)# shape of pred_a_j is (batch_size, 1)
-        
-                    
-                    m = (x_1_a_j_batch - x_1_a_k_batch + \
-                            x_1_b_k_batch - x_1_b_j_batch + \
-                                pred_a_j - pred_a_k + \
-                                pred_b_k - pred_b_j).to(device)
-
-                    z = torch.randn_like(x_2_a_j_batch)
-                    
-                    # fake_img = self.adversary(z.to(dtype = torch.float32))
-                    fake_img = z.to(torch.float32)
-        
-                    
-                    G_loss = criterion(self.learner(fake_img), m.to(dtype = torch.float32))
-                    
-                    self.optimizerG.zero_grad()
-                    G_loss.backward()
-                    self.optimizerG.step()
-
-                    self.adversary.eval()
-                    all_G_loss += G_loss.item()
-                
-                
-                
-                
-                
-                print('Epoch {}, d_loss: {:.6f}, g_loss: {:.6f} '.format(epoch, all_D_loss/len(self.train_dl), all_G_loss/len(self.train_dl)))
-
-                    
+                self.optimizerG.zero_grad()
+                G_loss.backward()
+                self.optimizerG.step()
             
-            torch.save(self.learner, os.path.join(
-                self.model_dir, "epoch{}".format(epoch)))
+                all_D_loss += D_loss.item()
+                all_G_loss += G_loss.item()
+                
+                
+            print('Epoch {}, d_loss: {:.6f}, g_loss: {:.6f} '.format(epoch, all_D_loss/len(self.train_dl), all_G_loss/len(self.train_dl)))
+            
+            # torch.save(self.learner, os.path.join(
+            #     self.model_dir, "epoch{}".format(epoch)))
 
             if logger is not None:
                 logger(self.learner, self.adversary, epoch, self.writer)
@@ -270,7 +210,6 @@ class _BaseSupLossADeepCI(_BaseADeepCI):
         if logger is not None:
             self.writer.flush()
             self.writer.close()
-            
 
         return self
 
