@@ -187,30 +187,19 @@ class _BaseSupLossADeepCI(_BaseADeepCI):
                     pred_a_k = self.learner(x_2_a_k_batch) # function h should output 0-9
                     pred_b_j = self.learner(x_2_b_j_batch)
                     pred_b_k = self.learner(x_2_b_k_batch)
-                    print('shape(pred_a_j)', pred_a_j.shape)
                     
-                    # pred_a_j = torch.argmax(pred_a_j, dim=1)
-                    # pred_a_k = torch.argmax(pred_a_k, dim=1)
-                    # pred_b_j = torch.argmax(pred_b_j, dim=1)
-                    # pred_b_k = torch.argmax(pred_b_k, dim=1)
-                    print('shape(pred_a_j)', pred_a_j.shape)
+                    d_loss = criterion(pred_a_k, torch.nn.functional.one_hot(X_2_a_j_t.to(dtype = torch.int64), num_classes=11).to(dtype = torch.float32))
                     
-                    # d_loss = criterion(pred_a_k.to(dtype = torch.float32), X_2_a_k_t.to(dtype = torch.float32))
-                    d_loss = criterion(torch.argmax(pred_a_k, dim=1).to(dtype = torch.float32), X_2_a_k_t.to(dtype = torch.float32))
-                    
-                    z = torch.rand((num_imgs, 784), device=device)
-                    print('shape(z)', z.shape)
+                    z = torch.rand((num_imgs, 100), device=device)
                     noise_img = self.adversary(z)
-                    print('shape(noise_img)', noise_img.shape)
-                    print('Noise_img is on device:', noise_img.device)
+                    # print('shape(noise_img)', noise_img.shape)
+                    # print('Noise_img is on device:', noise_img.device)
                     noise_img.to(dtype = torch.float32)
                     
                     # print('shape(fake_img)', fake_img.shape)
     
                     fake_output = self.learner(noise_img)
                     
-                    print('shape of x_1_a_j_batch', x_1_a_j_batch.shape)
-                    print('shape of pred_a_j', pred_a_j.shape)
                     m = (x_1_a_j_batch - x_1_a_k_batch + \
                             x_1_b_k_batch - x_1_b_j_batch + \
                                 pred_a_j - pred_a_k + \
