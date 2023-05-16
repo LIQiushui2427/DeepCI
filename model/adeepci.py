@@ -13,6 +13,7 @@ from .oadam import OAdam
 from torch.optim import Adam, SGD, AdamW, RMSprop
 from .rbflayer import RBF
 from torch.amp import autocast_mode
+from torch.nn import functional as F
 # TODO. This epsilon is used only because pytorch 1.5 has an instability in torch.cdist
 # when the input distance is close to zero, due to instability of the square root in
 # automatic differentiation. Should be removed once pytorch fixes the instability.
@@ -37,8 +38,11 @@ def add_weight_decay(net, l2_value, skip_list=()):
             decay.append(param)
     return [{'params': no_decay, 'weight_decay': 0.}, {'params': decay, 'weight_decay': l2_value}]
 
-def criterion(y, y_hat):
-    return nn.BCELoss()(y_hat.squeeze(1), y)
+def criterion(x, y, label):# x:(bs,11),y (bs), label:(bs,1)
+    # x_pred = torch.argmax(x[:,:-1], dim=1)# (bs)
+    loss_0 = F.cross_entropy(x[:,:-1], y, reduction='none')# (bs)
+    loss_1 = torch.mean(x[:,-1]) * label# (bs)
+    return torch.mean(loss_0 + loss_1)
 def _kernel(x, y, basis_func, sigma):
     return basis_func(torch.cdist(x, y + EPSILON) * torch.abs(sigma))
 
@@ -124,7 +128,7 @@ class _BaseSupLossADeepCI(_BaseADeepCI):
     def fit(self, X_1_a_j, X_2_a_j, X_1_a_k, X_2_a_k,
                   X_1_b_j, X_2_b_j, X_1_b_k, X_2_b_k, Z, X_2_a_j_t,X_2_a_k_t,X_2_b_j_t,X_2_b_k_t,
                 learner_l2=2e-5, adversary_l2=2e-5, adversary_norm_reg=1e-3,
-                learner_lr=0.00002, adversary_lr=0.00002, n_epochs=100, bs=100, train_learner_every=1, train_adversary_every=2, ols_weight=0.1, warm_start=False, logger=None, model_dir='.', device = device, verbose=False):
+                learner_lr=0.00002, adversary_lr=0.00002, n_epochs=100, bs=100, train_learner_every=1, train_adversary_every=8, ols_weight=0.1, warm_start=False, logger=None, model_dir='.', device = device, verbose=False):
         """
         Parameters
         ----------
@@ -168,12 +172,13 @@ class _BaseSupLossADeepCI(_BaseADeepCI):
                 # shape of x_1_a_j_batch torch.Size([200]) # 0-1
                 # shape of x_2_a_j_batch torch.Size([200, 28, 28])
                 # shape of z_batch torch.Size([200]), range is [0,1]
-
+                # print("shape of z_batch", z_batch.shape)
                 # Shape of X_2_a_j_t : 200, 1
                 
                 num_imgs = x_1_a_j_batch.shape[0] # bs
-                
-                print("shape of x_2_a_j_batch", x_2_a_j_batch.shape)# shape of x_2_a_j_batch torch.Size([bs, 784]
+                real_labels = torch.ones(num_imgs, 1).to(device)
+                fake_labels = torch.zeros(num_imgs, 1).to(device)
+                # print("shape of x_2_a_j_batch", x_2_a_j_batch.shape)# shape of x_2_a_j_batch torch.Size([bs, 784]
                 # Train Discriminator
                 
                 # flatten the images  
@@ -181,32 +186,49 @@ class _BaseSupLossADeepCI(_BaseADeepCI):
                 x_2_a_k_batch = torch.flatten(x_2_a_k_batch, start_dim=1)
                 x_2_b_j_batch = torch.flatten(x_2_b_j_batch, start_dim=1)
                 x_2_b_k_batch = torch.flatten(x_2_b_k_batch, start_dim=1)
+                
+                X_2_a_k_t = torch.flatten(X_2_a_k_t)
+                X_2_a_k_t = torch.tensor(X_2_a_k_t, dtype=torch.long)
+                X_2_a_j_t = torch.flatten(X_2_a_j_t)
+                X_2_a_j_t = torch.tensor(X_2_a_j_t, dtype=torch.long)
+                X_2_b_j_t = torch.flatten(X_2_b_j_t)
+                X_2_b_j_t = torch.tensor(X_2_b_j_t, dtype=torch.long)
+                X_2_b_k_t = torch.flatten(X_2_b_k_t)
+                x_2_b_k_t = torch.tensor(X_2_b_k_t, dtype=torch.long)
+                
                 if (it % train_learner_every == 0):
                     
+                    pred_a_k = self.learner(x_2_a_k_batch)# shape of pred_a_k torch.Size([200, 11])
                     pred_a_j = self.learner(x_2_a_j_batch)
-                    pred_a_k = self.learner(x_2_a_k_batch) # function h should output 0-9
                     pred_b_j = self.learner(x_2_b_j_batch)
                     pred_b_k = self.learner(x_2_b_k_batch)
                     
-                    d_loss = criterion(pred_a_k, torch.nn.functional.one_hot(X_2_a_j_t.to(dtype = torch.int64), num_classes=11).to(dtype = torch.float32))
+                    # print('shape(pred_a_k)', pred_a_k.shape)
+                    # print('X_2_a_k_t shape', X_2_a_k_t.shape)
                     
-                    z = torch.rand((num_imgs, 100), device=device)
-                    noise_img = self.adversary(z)
+                    # D_real_loss = criterion(pred_a_k, X_2_a_k_t, real_labels)
+                    
+
+                    noise_img = self.adversary(z_batch.to(dtype = torch.float32))
+                    
                     # print('shape(noise_img)', noise_img.shape)
                     # print('Noise_img is on device:', noise_img.device)
-                    noise_img.to(dtype = torch.float32)
+                    # fake_output = self.learner(noise_img.to(dtype = torch.float32))
+
+                    # D_fake_loss = criterion(fake_output, X_2_a_j_t, fake_labels)
                     
                     # print('shape(fake_img)', fake_img.shape)
-    
-                    fake_output = self.learner(noise_img)
-                    
                     m = (x_1_a_j_batch - x_1_a_k_batch + \
                             x_1_b_k_batch - x_1_b_j_batch + \
-                                pred_a_j - pred_a_k + \
-                                pred_b_k - pred_b_j)
+                                torch.argmax(pred_a_j) - torch.argmax(pred_a_k) + \
+                                    torch.argmax(pred_b_k) - torch.argmax(pred_b_j)) * \
+                                        torch.mean(noise_img**2)
                     
-                    D_loss = d_loss
-                    
+                    print('torch.mean(torch.maximum(torch.tensor(0),-1*(m)))', torch.mean(torch.maximum(torch.tensor(0),-1*(m))).item())
+                    # D_loss = D_fake_loss + D_real_loss + 2 * torch.mean(torch.maximum(torch.tensor(0),-1*(m))) - ols_weight * torch.mean((x_1_a_j_batch - x_1_a_k_batch + pred_b_k - pred_b_j)**2) + torch.mean(noise_img**2)
+                    # D_loss = (2 * torch.mean(torch.maximum(torch.tensor(0),-1*(m)))) ** 2 - ols_weight * torch.mean((x_1_a_j_batch - x_1_a_k_batch + pred_b_k - pred_b_j)**2) + torch.mean(noise_img**2)
+                    D_loss = torch.maximum(torch.tensor(0), (10 * torch.mean(torch.maximum(torch.tensor(0),-1*(m))) ** 2 - ols_weight * torch.mean((x_1_a_j_batch - x_1_a_k_batch + pred_b_k - pred_b_j)**2))) + torch.mean(noise_img**2)
+                    # abs
                     self.optimizerD.zero_grad()
                     D_loss.backward(retain_graph=True)
                     self.optimizerD.step()
@@ -220,20 +242,21 @@ class _BaseSupLossADeepCI(_BaseADeepCI):
                     pred_a_k = self.learner(x_2_a_k_batch)
                     pred_b_j = self.learner(x_2_b_j_batch)
                     pred_b_k = self.learner(x_2_b_k_batch)# shape of pred_a_j is (batch_size, 1)
-        
+                    noise_img = self.adversary(z_batch.to(dtype = torch.float32))
                     
                     m = (x_1_a_j_batch - x_1_a_k_batch + \
                             x_1_b_k_batch - x_1_b_j_batch + \
                                 pred_a_j - pred_a_k + \
                                 pred_b_k - pred_b_j).to(device)
 
-                    z = torch.randn_like(x_2_a_j_batch)
-                    
+                    # z = torch.rand((num_imgs, 784), device=device)
                     # fake_img = self.adversary(z.to(dtype = torch.float32))
-                    fake_img = z.to(torch.float32)
-        
+                    fake_img = self.adversary(z_batch.to(dtype = torch.float32))
                     
-                    G_loss = criterion(self.learner(fake_img), m.to(dtype = torch.float32))
+                    # G_output = self.learner(fake_img)
+                    # G_loss = criterion(G_output, X_2_a_j_t, real_labels)
+                    # G_loss = criterion(G_output, X_2_a_j_t, fake_labels)
+                    G_loss = 2 * torch.mean(torch.maximum(torch.tensor(0),-1*(m)))
                     
                     self.optimizerG.zero_grad()
                     G_loss.backward()
@@ -243,12 +266,7 @@ class _BaseSupLossADeepCI(_BaseADeepCI):
                     all_G_loss += G_loss.item()
                 
                 
-                
-                
-                
                 print('Epoch {}, d_loss: {:.6f}, g_loss: {:.6f} '.format(epoch, all_D_loss/len(self.train_dl), all_G_loss/len(self.train_dl)))
-
-                    
             
             torch.save(self.learner, os.path.join(
                 self.model_dir, "epoch{}".format(epoch)))
