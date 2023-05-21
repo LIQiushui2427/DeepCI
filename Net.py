@@ -11,7 +11,7 @@ class Discriminator(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.net_learner_supervised = torch.nn.Sequential(
-            torch.nn.Linear(1024, k),
+            torch.nn.Linear(784, k),
             torch.nn.BatchNorm1d(k),
             torch.nn.LeakyReLU(0.2),
             torch.nn.Dropout(p=dropout_p),
@@ -27,6 +27,7 @@ class Discriminator(torch.nn.Module):
         # print("ret:",ret)
         return ret
     def forward(self, x):
+        x = x.reshape(x.shape[0], 784)
         temp = self.net_learner_supervised(x) #shape is (batch, 10)
         confident = self.predict(temp)
         temp = torch.cat((temp, confident.unsqueeze(1)), dim=1)# shape is (batch, 11)(100, 11)
