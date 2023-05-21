@@ -14,23 +14,23 @@ import warnings
 import numpy
 # import itertools
 import matplotlib.pyplot as plt 
-import torch
+import torch, gc
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 # import statsmodels.api as sm
 from torchvision import datasets, transforms, utils, models
 # from sklearn.model_selection import train_test_split
-# import numpy as np
-# import matplotlib.pyplot as plt
 import torch.utils.data
 from scipy.stats import gaussian_kde
 numpy.set_printoptions(threshold=sys.maxsize)
 torch.set_printoptions(threshold=sys.maxsize)
 import argparse
 import torch.optim as optim
+from torch.optim import optimizer
 from torchvision import datasets, transforms
 from torch.autograd import Variable
+from scipy.stats import gaussian_kde
 ### import from our files
 # ! pip install statsmodels
 from Net import Discriminator, Net_X, ResNet50
@@ -165,8 +165,8 @@ def Simdata(NUM_I,seed,func,rho): #a = y_train/test, b = X_train/test
     torch.Tensor(X_2_a_j_t).reshape((-1,1)).double(), torch.Tensor(X_2_a_k_t).reshape((-1,1)).double(),\
     torch.Tensor(X_2_b_j_t).reshape((-1,1)).double(), torch.Tensor(X_2_b_k_t).reshape((-1,1)).double()
 
-import torch
-from torch.optim import optimizer
+
+
 def train(epoch):
     all_loss = 0
     for batch_idx, (data, target) in enumerate(train_loader):
@@ -205,26 +205,28 @@ def test(model):
     test_loss = 0
     correct = 0
     # print('test_loader: ', len(test_loader))
-    for data, target in test_loader:
-        data, target = data.to(device), target.to(device)
-        data, target = Variable(data, volatile=True), Variable(target)
-        data = torch.flatten(data, start_dim=1)
-        # print('shape of target: ', target.shape)
+    with torch.no_grad():
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
+            data, target = Variable(data, volatile=True), Variable(target)
+            data = torch.flatten(data, start_dim=1)
+            # print('shape of target: ', target.shape)
 
-        output = model(data)
+            output = model(data)
 
-        cls = output[:,:-1].to(device) # shape is (batch, 10)
-        real = output[:,-1].to(device)# shape is (batch, 1)
-        loss_0 = F.cross_entropy(cls, target)
-        loss_1 = torch.mean(torch.abs(real - 0.5))
-        test_loss += torch.mean(loss_0 + loss_1)
+            cls = output[:,:-1].to(device) # shape is (batch, 10)
+            real = output[:,-1].to(device)# shape is (batch, 1)
+            loss_0 = F.cross_entropy(cls, target)
+            loss_1 = torch.mean(torch.abs(real - 0.5))
+            test_loss += torch.mean(loss_0 + loss_1)
+            
+            pred = torch.argmax(cls, dim=1)
+            correct += pred.eq(target.view_as(pred)).sum().item()
+        test_loss /= args.bs
+        accuracy = correct / args.bs
         
-        pred = torch.argmax(cls, dim=1)
-        correct += pred.eq(target.view_as(pred)).sum().item()
-    test_loss /= args.bs
-    accuracy = correct / args.bs
-    
-    print("test_loss: ", test_loss.item(), "accuracy:", accuracy)
+        print("test_loss: ", test_loss.item(), "accuracy:", accuracy)
+        
 if __name__ == '__main__':
     seedNum = 888
     tf.random.set_seed(seedNum)
@@ -236,16 +238,17 @@ if __name__ == '__main__':
     #  ---------------------
     # parameters
     #  -------------------
-    parser.add_argument("--n_epochs", type=int, default=300, help="number of epochs of training")
+    parser.add_argument("--n_epochs", type=int, default=50, help="number of epochs of training")
     parser.add_argument("--batch_size", type=int, default=100, help="size of the batches")
     parser.add_argument("--lr", type=float, default=0.0002, help="adam: learning rate")
     parser.add_argument("--momentum", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
-    parser.add_argument("--test_batch_size", type=int, default=200, help="testing batch size")
+    parser.add_argument("--test_batch_size", type=int, default=100, help="testing batch size")
     parser.add_argument("--latent_dim", type=int, default=100, help="dimensionality of the latent space")
     parser.add_argument("--cuda", type=bool, default=True, help="use GPU computation")
     parser.add_argument("--img_size", type=int, default=32, help="size of each image dimension")
     parser.add_argument("--log_interval", type=int, default=600, help="interval between image sampling")
-    parser.add_argument("--direction", type=str, default='/root/DeepCI-master/notebooks', help="the file you want to run")
+    # parser.add_argument("--direction", type=str, default='/root/DeepCI-master/notebooks', help="the file you want to run")
+    parser.add_argument("--direction", type=str, default='c:/Users/lqs/Downloads/DeepCI/notebooks', help="the file you want to run")
     parser.add_argument("--seed", type=int, default=888, help="the seed you want to use")
 
     # ---------------------
@@ -257,7 +260,7 @@ if __name__ == '__main__':
     parser.add_argument("--adversary_norm_reg", type=float, default=1e-3, help="adversary_norm_reg")
     parser.add_argument("--learner_lr", type=float, default=0.0004, help="learner_lr")
     parser.add_argument("--adversary_lr", type=float, default=0.0001, help="adversary_lr")
-    parser.add_argument("--n_epoch", type=int, default=2, help="n_epochs")
+    parser.add_argument("--n_epoch", type=int, default=20, help="n_epochs")
     parser.add_argument("--bs", type=int, default=100, help="bs")
     parser.add_argument("--train_learner_every", type=int, default=1, help="train_learner_every")
     parser.add_argument("--train_adversary_every", type=int, default=8, help="train_adversary_every")   
@@ -268,9 +271,10 @@ if __name__ == '__main__':
     parser.add_argument("--device", type=str, default='cuda', help="device")
     parser.add_argument("--verbose", type=bool, default=False, help="verbose")
     parser.add_argument("--k",type=int, default=256, help="k for net" )
-    print(os.getcwd())
+   
     args = parser.parse_args()
     print(args)
+    print(os.getcwd())
     os.chdir(args.direction)
     
     # ---------------------
@@ -299,10 +303,12 @@ if __name__ == '__main__':
             X_2_b_j_t,  X_2_b_k_t= Simdata(2000, 2, aa, 0.2)
     
     image = X_2_a_k[6]
+    
     # plot the sample
-    fig = plt.figure
-    plt.imshow(image.squeeze(0), cmap='gray')
+    # fig = plt.figure
+    # plt.imshow(image.squeeze(0), cmap='gray')
     # plt.show()
+    
     print(X_2_a_k.shape)
 
     # import sys
@@ -314,7 +320,7 @@ if __name__ == '__main__':
     # define the device
     device = torch.cuda.current_device() if torch.cuda.is_available() else None
     print(torch.cuda.is_available())
-    print(device)
+    print('device:', device)
     
     
     net_adversary = torch.nn.Sequential(
@@ -379,6 +385,8 @@ if __name__ == '__main__':
     optimizer = optim.Adam(model.parameters(), lr=0.0002, betas=(0.5, 0.999), weight_decay=1e-5)
 
     # pretrain net
+    print("pretrain net: args.n_epoch: ", args.n_epoch)
+    
     for epoch in range(1, 2):
         train(epoch)
         test(model)
@@ -386,9 +394,7 @@ if __name__ == '__main__':
     # ---------------------
     # log the results
     # ---------------------
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from scipy.stats import gaussian_kde
+
     model_temp = learner #torch.load(os.path.join(res.model_dir,"epoch{}".format(res.n_epochs - 1)))
     X_2_a_k = torch.flatten(X_2_a_k, start_dim=1)
     print("shape of X_2_a_k: ", X_2_a_k.shape)
@@ -432,8 +438,10 @@ if __name__ == '__main__':
     print("pred: ", pred.shape)
     print("X_2_a_k_t: ", X_2_a_k_t.shape)
     x = X_2_a_k_t.T.squeeze().cpu().data.numpy()
+    
     # calculate the density
     xy = np.vstack([x,pred])
+    print("xy: ", xy.shape)
     z = gaussian_kde(xy)(xy)
 
     fig, ax = plt.subplots()
@@ -441,7 +449,7 @@ if __name__ == '__main__':
     plt.show()
     plt.scatter(X_2_a_k_t.T.squeeze().cpu().data.numpy(), aa(X_2_a_k_t).cpu().data.numpy(), cmap='Spectral_r')# plot the true function
     plt.show()
-    
+    plt.close()
 
     y = learner(X_2_a_k.cuda()).cpu().data.numpy()
     x = aa(X_2_a_k_t).cpu().data.numpy()
