@@ -218,7 +218,7 @@ class _BaseSupLossADeepCI(_BaseADeepCI):
                     # D_fake_loss = criterion(fake_output, X_2_a_j_t, fake_labels)
                     
                     # print('shape(fake_img)', fake_img.shape)
-                    m = (x_1_a_j_batch - x_1_a_k_batch + \
+                    m = (x_1_a_j_batch - x_1_a_k_batch + \ 
                             x_1_b_k_batch - x_1_b_j_batch + \
                                 torch.argmax(pred_a_j) - torch.argmax(pred_a_k) + \
                                     torch.argmax(pred_b_k) - torch.argmax(pred_b_j)) * \
